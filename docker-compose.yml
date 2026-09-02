@@ -1,0 +1,59 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      - DATABASE_URL=postgresql://gp_user:GPCRM2026Prod@db:5432/gp_db?schema=public
+      - NEXTAUTH_URL=${NEXTAUTH_URL}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      - RUN_SEED=${RUN_SEED:-false}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+      - "traefik.http.routers.gp-crm.rule=Host(`app.crmgp.cloud`)"
+      - "traefik.http.routers.gp-crm.entrypoints=websecure"
+      - "traefik.http.routers.gp-crm.tls.certresolver=leresolver"
+      - "traefik.http.routers.gp-crm-http.rule=Host(`app.crmgp.cloud`)"
+      - "traefik.http.routers.gp-crm-http.entrypoints=web"
+      - "traefik.http.routers.gp-crm-http.middlewares=gp-redirect"
+      - "traefik.http.middlewares.gp-redirect.redirectscheme.scheme=https"
+      - "traefik.http.middlewares.gp-redirect.redirectscheme.permanent=true"
+      - "traefik.http.services.gp-crm.loadbalancer.server.port=3000"
+    networks:
+      - default
+      - traefik
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "node", "-e", "require('http').get('http://localhost:3000/api/health', (r) => { process.exit(r.statusCode === 200 ? 0 : 1); }).on('error', () => process.exit(1))" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      - POSTGRES_USER=gp_user
+      - POSTGRES_PASSWORD=GPCRM2026Prod
+      - POSTGRES_DB=gp_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U gp_user -d gp_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  postgres_data:
+
+
+networks:
+  traefik:
+    external: true

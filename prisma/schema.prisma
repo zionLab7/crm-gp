@@ -1,0 +1,245 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  VENDEDOR
+  GESTOR
+}
+
+enum TaskStatus {
+  PENDENTE
+  CONCLUIDA
+  ATRASADA
+}
+
+// InteractionType now managed dynamically in InteractionTypeConfig table
+
+enum EntityType {
+  CLIENT
+  PRODUCT
+}
+
+model User {
+  id           String        @id @default(cuid())
+  name         String
+  email        String        @unique
+  password     String
+  role         Role          @default(VENDEDOR)
+  avatar       String?
+  monthlyGoal  Float         @default(0)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  
+  clients      Client[]
+  tasks        Task[]
+  interactions    Interaction[]
+  stockMovements  StockMovement[]
+  
+  @@map("users")
+}
+
+model Client {
+  id              String         @id @default(cuid())
+  name            String
+  cnpj            String?        @unique
+  phone           String?
+  email           String?
+  address         String?
+  potentialValue  Float          @default(0)
+  assignedUserId  String
+  currentStageId  String
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  archivedFromPipeline Boolean   @default(false)
+  
+  assignedUser      User                 @relation(fields: [assignedUserId], references: [id])
+  currentStage      PipelineStage        @relation(fields: [currentStageId], references: [id])
+  tasks             Task[]
+  interactions      Interaction[]
+  products          ClientProduct[]
+  customFieldValues CustomFieldValue[]
+  
+  @@map("clients")
+}
+
+model PipelineStage {
+  id            String   @id @default(cuid())
+  name          String
+  color         String   // hex color
+  order         Int      @default(0)
+  isClosedStage Boolean  @default(false) // Marca se esta fase representa venda fechada
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  
+  clients       Client[]
+  
+  @@map("pipeline_stages")
+}
+
+model Task {
+  id          String     @id @default(cuid())
+  title       String
+  description String?
+  dueDate     DateTime
+  dueTime     String?    // "HH:MM" optional time
+  status      TaskStatus @default(PENDENTE)
+  completedAt DateTime?  // set when status = CONCLUIDA
+  clientId    String?
+  userId      String
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  
+  client      Client?    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user        User       @relation(fields: [userId], references: [id])
+  
+  @@map("tasks")
+}
+
+model Interaction {
+  id          String   @id @default(cuid())
+  type        String   // dynamic: references InteractionTypeConfig.name or legacy values
+  description String
+  metadata    String?  // JSON string for additional data (saleValue, etc)
+  clientId    String?
+  channel     String   @default("CRM")
+  userId      String
+  createdAt   DateTime @default(now())
+  
+  client      Client?  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id])
+  
+  @@map("interactions")
+}
+
+// Dynamic interaction types configured by gestor
+model InteractionTypeConfig {
+  id         String   @id @default(cuid())
+  name       String   // Ex: "Ligação", "Visita", "Venda"
+  emoji      String   @default("📝")
+  isSaleType Boolean  @default(false) // triggers sale modal
+  isSystem   Boolean  @default(false) // cannot be deleted
+  color      String   @default("gray")
+  order      Int      @default(0)
+  createdAt  DateTime @default(now())
+  
+  @@map("interaction_type_configs")
+}
+
+// Produtos
+model Product {
+  id                String   @id @default(cuid())
+  name              String
+  stockCode         String   @unique
+  costPrice         Float?   // Preço Standard (visível por padrão, gestor pode ocultar por produto)
+  stockQuantity     Int      @default(0)
+  minStockLevel     Int      @default(0)
+  unit              String   @default("UN")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  clients                ClientProduct[]
+  customFieldValues      CustomFieldValue[]
+  productFieldVisibility ProductFieldVisibility[]
+  stockMovements         StockMovement[]
+
+  @@map("products")
+}
+
+model StockMovement {
+  id          String   @id @default(cuid())
+  productId   String
+  type        String   // "IN", "OUT", "ADJUSTMENT"
+  quantity    Int
+  reason      String?
+  referenceId String?
+  userId      String
+  createdAt   DateTime @default(now())
+  
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id])
+  
+  @@map("stock_movements")
+}
+
+// Relação Many-to-Many Cliente-Produto
+model ClientProduct {
+  id        String   @id @default(cuid())
+  clientId  String
+  productId String
+  quantity  Int      @default(1)  // Quantidade (opcional)
+  createdAt DateTime @default(now())
+  
+  client  Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, productId])
+  @@map("client_products")
+}
+
+// Campos Customizados (para Clientes E Produtos)
+model CustomField {
+  id             String     @id @default(cuid())
+  name           String
+  fieldType      String     // "text", "number", "date", "select", "calculated"
+  options        String?    @db.Text
+  formula        String?    @db.Text
+  order          Int        @default(0)
+  required       Boolean    @default(false)
+  highlightColor String?    // Ex: "#f59e0b" for visual highlight in product cards
+  entityType     EntityType
+  createdAt      DateTime   @default(now())
+  
+  values               CustomFieldValue[]
+  productVisibilities  ProductFieldVisibility[]
+
+  @@map("custom_fields")
+}
+
+// Per-product field visibility (gestor hides specific fields for specific products)
+model ProductFieldVisibility {
+  id            String   @id @default(cuid())
+  productId     String
+  fieldKey      String   // customFieldId OR "__costPrice__"
+  hiddenForRole String   @default("VENDEDOR")
+  customFieldId String?
+  
+  product     Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  customField CustomField? @relation(fields: [customFieldId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, fieldKey, hiddenForRole])
+  @@map("product_field_visibility")
+}
+
+// Valores dos Campos Customizados (para Clientes E Produtos)
+model CustomFieldValue {
+  id            String   @id @default(cuid())
+  customFieldId String
+  clientId      String?  // Opcional: se for valor de cliente
+  productId     String?  // Opcional: se for valor de produto
+  value         String   @db.Text
+  
+  customField CustomField @relation(fields: [customFieldId], references: [id], onDelete: Cascade)
+  client      Client?     @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  product     Product?    @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([customFieldId, clientId])
+  @@unique([customFieldId, productId])
+  @@map("custom_field_values")
+}
+
+model SystemConfig {
+  key       String   @id
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt
+
+  @@map("system_configs")
+}

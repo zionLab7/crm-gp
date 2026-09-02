@@ -1,0 +1,255 @@
+export const dynamic = 'force-dynamic';
+
+import { NextResponse } from "next/server";
+import { requireRole } from "@/lib/session";
+import { prisma } from "@/lib/prisma";
+
+export async function GET(request: Request) {
+    try {
+        await requireRole("GESTOR");
+
+        const { searchParams } = new URL(request.url);
+        const period = searchParams.get("period") || "month";
+
+        const now = new Date();
+        let startDate = new Date();
+
+        switch (period) {
+            case "week": startDate.setDate(now.getDate() - 7); break;
+            case "month": startDate = new Date(now.getFullYear(), now.getMonth(), 1); break;
+            case "quarter": startDate.setMonth(now.getMonth() - 3); break;
+            case "year": startDate.setFullYear(now.getFullYear() - 1); break;
+            default: startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        }
+
+        // ✅ Fetch only custom sale interaction type names (NOT STATUS_CHANGE)
+        let saleTypeNames: string[] = [];
+        try {
+            const saleTypes = await (prisma as any).interactionTypeConfig.findMany({
+                where: { isSaleType: true },
+                select: { name: true },
+            });
+            saleTypeNames = saleTypes.map((t: any) => t.name);
+        } catch {
+            saleTypeNames = ["Venda"];
+        }
+        // Guarantee "Venda" is always included as fallback
+        if (!saleTypeNames.includes("Venda")) saleTypeNames.push("Venda");
+
+        // ✅ Fetch MONTHLY sale interactions in the period
+        const allSaleInteractions = await prisma.interaction.findMany({
+            where: {
+                type: { in: saleTypeNames },
+                metadata: { contains: "saleValue" },
+                createdAt: { gte: startDate, lte: now },
+            },
+            select: { id: true, clientId: true, userId: true, metadata: true, createdAt: true },
+        });
+
+        // ✅ Fetch ALL SCHEDULED sale interactions (no date filter — we use delivery dueDate)
+        const scheduledSaleInteractions = await prisma.interaction.findMany({
+            where: {
+                type: { in: saleTypeNames },
+                metadata: { contains: "SCHEDULED" },
+            },
+            select: { id: true, clientId: true, userId: true, metadata: true, createdAt: true },
+        });
+
+        // ✅ Fetch client and user names for scheduled sale interactions
+        const schedClientIds = [...new Set(scheduledSaleInteractions.map(i => i.clientId))];
+        const schedUserIds = [...new Set(scheduledSaleInteractions.map(i => i.userId))];
+        const schedClients = schedClientIds.length > 0
+            ? await prisma.client.findMany({ where: { id: { in: schedClientIds } }, select: { id: true, name: true } })
+            : [];
+        const schedUsers = schedUserIds.length > 0
+            ? await prisma.user.findMany({ where: { id: { in: schedUserIds } }, select: { id: true, name: true } })
+            : [];
+        const schedClientNameMap = new Map(schedClients.map(c => [c.id, c.name]));
+        const schedUserNameMap = new Map(schedUsers.map(u => [u.id, u.name]));
+
+        // Build a map: clientId -> total sale value
+        const clientSaleMap = new Map<string, number>();
+        // Build a map: userId -> total sale value (for ranking)
+        const userSaleMap = new Map<string, number>();
+        // Count unique clients with sales
+        const clientsWithSales = new Set<string>();
+
+        let totalVendasGeral = 0;
+
+        // Helper to accumulate sale value into maps
+        const addSaleValue = (clientId: string, oderId: string, val: number) => {
+            clientSaleMap.set(clientId, (clientSaleMap.get(clientId) || 0) + val);
+            userSaleMap.set(oderId, (userSaleMap.get(oderId) || 0) + val);
+            clientsWithSales.add(clientId);
+            totalVendasGeral += val;
+        };
+
+        // Sum MONTHLY sales (exclude SCHEDULED)
+        for (const interaction of allSaleInteractions) {
+            if (!interaction.metadata) continue;
+            try {
+                const meta = JSON.parse(interaction.metadata);
+                if (meta.saleType === "SCHEDULED") continue;
+                const val = parseFloat(String(meta.saleValue || 0));
+                if (val > 0) {
+                    addSaleValue(interaction.clientId, interaction.userId, val);
+                }
+            } catch { /* ignore */ }
+        }
+
+        // Sum SCHEDULED deliveries whose dueDate falls within the report period
+        for (const interaction of scheduledSaleInteractions) {
+            if (!interaction.metadata) continue;
+            try {
+                const meta = JSON.parse(interaction.metadata);
+                if (meta.saleType !== "SCHEDULED" || !meta.deliveries) continue;
+                for (const delivery of meta.deliveries) {
+                    if (!delivery.dueDate) continue;
+                    const dueDate = new Date(delivery.dueDate + "T00:00:00");
+                    if (dueDate >= startDate && dueDate <= now) {
+                        const val = parseFloat(String(delivery.value || 0));
+                        if (val > 0) {
+                            addSaleValue(interaction.clientId, interaction.userId, val);
+                        }
+                    }
+                }
+            } catch { /* ignore */ }
+        }
+
+        // ✅ Build vendasProgramadas from scheduled sale interactions
+        const startDateStr = startDate.toISOString().split("T")[0];
+        const vendasProgramadas = scheduledSaleInteractions
+            .map(interaction => {
+                try {
+                    const meta = JSON.parse(interaction.metadata || "{}");
+                    if (meta.saleType !== "SCHEDULED" || !meta.deliveries) return null;
+                    const filteredDeliveries = (meta.deliveries as any[]).filter(
+                        (d: any) => d.dueDate && d.dueDate >= startDateStr
+                    );
+                    if (filteredDeliveries.length === 0) return null;
+                    return {
+                        id: interaction.id,
+                        clientName: schedClientNameMap.get(interaction.clientId) || "Desconhecido",
+                        vendedorName: schedUserNameMap.get(interaction.userId) || "Desconhecido",
+                        createdAt: interaction.createdAt.toISOString(),
+                        totalValue: parseFloat(String(meta.saleValue || 0)),
+                        items: meta.items || [],
+                        deliveries: filteredDeliveries.map((d: any) => ({ dueDate: d.dueDate, value: parseFloat(String(d.value || 0)) })),
+                    };
+                } catch { return null; }
+            })
+            .filter(Boolean);
+
+        // ✅ Vendor ranking — based purely on sale interactions
+        const vendedores = await prisma.user.findMany({
+            where: { role: "VENDEDOR" },
+            include: {
+                clients: {
+                    where: { createdAt: { gte: startDate, lte: now } },
+                },
+                tasks: { where: { createdAt: { gte: startDate, lte: now } } },
+            },
+        });
+
+        const vendedoresRanking = vendedores.map((vendedor) => {
+            const totalClientes = vendedor.clients.length;
+            const totalVendas = userSaleMap.get(vendedor.id) || 0;
+            // Count unique clients sold to by this vendedor
+            const clientesVendidos = allSaleInteractions.filter(
+                i => i.userId === vendedor.id && (clientSaleMap.get(i.clientId) || 0) > 0
+            );
+            const uniqueClientesVendidos = new Set(clientesVendidos.map(i => i.clientId)).size;
+            const conversao = totalClientes > 0 ? (uniqueClientesVendidos / totalClientes) * 100 : 0;
+
+            return {
+                id: vendedor.id,
+                name: vendedor.name,
+                totalClientes,
+                clientesFechados: uniqueClientesVendidos,
+                totalVendas,
+                conversao: Math.round(conversao),
+            };
+        });
+
+        vendedoresRanking.sort((a, b) => b.totalVendas - a.totalVendas);
+
+        // ✅ Funnel data — still shows distribution of clients across stages (informational only)
+        const stages = await prisma.pipelineStage.findMany({ orderBy: { order: "asc" } });
+        const clientesNoPeriodo = await prisma.client.findMany({
+            where: { createdAt: { gte: startDate, lte: now } },
+            include: { currentStage: true },
+        });
+        const funnelData = stages.map((stage) => ({
+            stage: stage.name,
+            count: clientesNoPeriodo.filter(c => c.currentStageId === stage.id).length,
+            color: stage.color,
+        }));
+
+        // ✅ Sales per day — from sale interactions + scheduled deliveries
+        const vendasPorDia: { date: string; vendas: number }[] = [];
+        for (let i = 29; i >= 0; i--) {
+            const date = new Date();
+            date.setDate(now.getDate() - i);
+            const dateStr = date.toISOString().split("T")[0];
+
+            // Count MONTHLY sales by createdAt
+            let vendasNoDia = allSaleInteractions.filter(interaction => {
+                return interaction.createdAt.toISOString().split("T")[0] === dateStr;
+            }).reduce((sum, interaction) => {
+                try {
+                    const meta = JSON.parse(interaction.metadata || "{}");
+                    if (meta.saleType === "SCHEDULED") return sum;
+                    return sum + (parseFloat(String(meta.saleValue || 0)) > 0 ? 1 : 0);
+                } catch { return sum; }
+            }, 0);
+
+            // Count SCHEDULED deliveries by dueDate
+            for (const interaction of scheduledSaleInteractions) {
+                if (!interaction.metadata) continue;
+                try {
+                    const meta = JSON.parse(interaction.metadata);
+                    if (meta.saleType !== "SCHEDULED" || !meta.deliveries) continue;
+                    for (const delivery of meta.deliveries) {
+                        if (!delivery.dueDate) continue;
+                        if (delivery.dueDate === dateStr) {
+                            const val = parseFloat(String(delivery.value || 0));
+                            if (val > 0) vendasNoDia++;
+                        }
+                    }
+                } catch { /* ignore */ }
+            }
+
+            vendasPorDia.push({ date: dateStr, vendas: vendasNoDia });
+        }
+
+        // ✅ Overall metrics — purely from sale interactions
+        const totalClientes = await prisma.client.count({
+            where: { createdAt: { gte: startDate, lte: now } },
+        });
+        const clientesFechadosCount = clientsWithSales.size;
+        const clientesAtivos = totalClientes - clientesFechadosCount;
+        const taxaConversaoGeral = totalClientes > 0 ? (clientesFechadosCount / totalClientes) * 100 : 0;
+        const ticketMedio = clientesFechadosCount > 0 ? totalVendasGeral / clientesFechadosCount : 0;
+
+        return NextResponse.json({
+            vendedoresRanking,
+            funnelData,
+            vendasPorDia,
+            vendasProgramadas,
+            metricas: {
+                totalClientes,
+                clientesAtivos,
+                clientesFechados: clientesFechadosCount,
+                taxaConversaoGeral: Math.round(taxaConversaoGeral),
+                ticketMedio: Math.round(ticketMedio),
+                valorTotalVendas: totalVendasGeral,
+            },
+        });
+    } catch (error: any) {
+        console.error("Erro ao buscar relatórios:", error);
+        return NextResponse.json(
+            { error: error.message || "Erro ao buscar relatórios" },
+            { status: 500 }
+        );
+    }
+}
