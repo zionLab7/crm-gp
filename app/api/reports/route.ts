@@ -10,6 +10,7 @@ export async function GET(request: Request) {
 
         const { searchParams } = new URL(request.url);
         const period = searchParams.get("period") || "month";
+        const channelFilter = searchParams.get("channel") || "ALL"; // CRM, BALCAO, ALL
 
         const now = new Date();
         let startDate = new Date();
@@ -36,14 +37,16 @@ export async function GET(request: Request) {
         // Guarantee "Venda" is always included as fallback
         if (!saleTypeNames.includes("Venda")) saleTypeNames.push("Venda");
 
-        // ✅ Fetch MONTHLY sale interactions in the period
+        // ✅ Fetch MONTHLY sale interactions in the period (with optional channel filter)
+        const channelWhere = channelFilter !== "ALL" ? { channel: channelFilter } : {};
         const allSaleInteractions = await prisma.interaction.findMany({
             where: {
                 type: { in: saleTypeNames },
                 metadata: { contains: "saleValue" },
                 createdAt: { gte: startDate, lte: now },
+                ...channelWhere,
             },
-            select: { id: true, clientId: true, userId: true, metadata: true, createdAt: true },
+            select: { id: true, clientId: true, userId: true, metadata: true, createdAt: true, channel: true },
         });
 
         // ✅ Fetch ALL SCHEDULED sale interactions (no date filter — we use delivery dueDate)
@@ -231,11 +234,34 @@ export async function GET(request: Request) {
         const taxaConversaoGeral = totalClientes > 0 ? (clientesFechadosCount / totalClientes) * 100 : 0;
         const ticketMedio = clientesFechadosCount > 0 ? totalVendasGeral / clientesFechadosCount : 0;
 
+        // ✅ Vendas por canal
+        let vendasCRM = 0;
+        let vendasBalcao = 0;
+        for (const interaction of allSaleInteractions) {
+            if (interaction.metadata) {
+                try {
+                    const meta = JSON.parse(interaction.metadata);
+                    if (meta.saleType === "SCHEDULED") continue;
+                    const val = parseFloat(String(meta.saleValue || 0));
+                    if ((interaction as any).channel === "BALCAO") {
+                        vendasBalcao += val;
+                    } else {
+                        vendasCRM += val;
+                    }
+                } catch {}
+            }
+        }
+
         return NextResponse.json({
             vendedoresRanking,
             funnelData,
             vendasPorDia,
             vendasProgramadas,
+            vendasPorCanal: {
+                crm: vendasCRM,
+                balcao: vendasBalcao,
+                total: vendasCRM + vendasBalcao,
+            },
             metricas: {
                 totalClientes,
                 clientesAtivos,

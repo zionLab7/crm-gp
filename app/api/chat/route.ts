@@ -136,6 +136,37 @@ async function getBusinessContext() {
         })
         .filter(Boolean);
 
+    // 9. Estoque — produtos com estoque baixo
+    const lowStockProducts = await prisma.product.findMany({
+        where: { minStockLevel: { gt: 0 } },
+        select: { name: true, stockCode: true, stockQuantity: true, minStockLevel: true, unit: true },
+    });
+    const estoqueAlerta = lowStockProducts
+        .filter(p => p.stockQuantity <= p.minStockLevel)
+        .map(p => ({
+            produto: p.name,
+            codigo: p.stockCode,
+            qtdAtual: `${p.stockQuantity} ${p.unit}`,
+            minimo: `${p.minStockLevel} ${p.unit}`,
+            status: p.stockQuantity === 0 ? "ZERADO" : "BAIXO",
+        }));
+
+    // 10. Vendas de Balcão — resumo do mês
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
+    const vendasBalcao = await prisma.interaction.findMany({
+        where: { channel: "BALCAO", createdAt: { gte: startOfMonth } },
+        select: { metadata: true },
+    });
+    let totalBalcaoMes = 0;
+    for (const vb of vendasBalcao) {
+        try {
+            const meta = JSON.parse(vb.metadata || "{}");
+            totalBalcaoMes += parseFloat(String(meta.saleValue || 0));
+        } catch {}
+    }
+
     // ============ HELPERS ============
     function getSaleValue(interactions: Array<{ metadata: string | null }>, potentialValue: number): number {
         for (const i of interactions) {
@@ -264,6 +295,12 @@ ${JSON.stringify(gestores)}
 
 --- VENDAS PROGRAMADAS ---
 ${vendasProgramadas.length > 0 ? JSON.stringify(vendasProgramadas, null, 1) : "Nenhuma venda programada registrada."}
+
+--- ESTOQUE (ALERTAS) ---
+${estoqueAlerta.length > 0 ? JSON.stringify(estoqueAlerta, null, 1) : "Nenhum produto com estoque baixo."}
+
+--- VENDAS BALCÃO (MÊS ATUAL) ---
+Total de vendas de balcão no mês: ${vendasBalcao.length} vendas, valor total: U$ ${totalBalcaoMes.toFixed(2)}
 `;
 }
 
@@ -288,6 +325,8 @@ Capacidades:
 - Pode cruzar dados entre vendedores, clientes, produtos e pipeline
 - Pode responder sobre VENDAS PROGRAMADAS: valor, cliente, vendedor, datas de entrega e status
 - Quando perguntado sobre vendas programadas, liste-as com cliente, valor total, e datas de entrega
+- Pode informar sobre ESTOQUE: quais produtos estão com estoque baixo ou zerado
+- Pode informar sobre VENDAS DE BALCÃO: total de vendas do mês, quantidade de transações
 - Pode identificar padrões de comportamento e recomendar ações
 
 Personalidade: Profissional, analítico, proativo. Você antecipa problemas e sugere soluções.

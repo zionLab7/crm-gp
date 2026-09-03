@@ -117,11 +117,19 @@ export async function GET() {
             ? allClients.filter(c => c.currentStageId === prospeccaoStage.id).length
             : 0;
 
+        // Low stock alert count
+        const lowStockProducts = await prisma.product.findMany({
+            where: { minStockLevel: { gt: 0 } },
+            select: { stockQuantity: true, minStockLevel: true },
+        });
+        const lowStockCount = lowStockProducts.filter(p => p.stockQuantity <= p.minStockLevel).length;
+
         return NextResponse.json({
             monthlyGoal: monthlyGoal || 0,
             currentValue,
             overdueTasks,
             newLeads,
+            lowStockCount,
         });
     } catch (error) {
         console.error("Erro ao buscar estatísticas:", error);
