@@ -25,8 +25,10 @@ type CartItem = Product & {
 type Sale = {
   id: string;
   createdAt: string;
-  itemsCount: number;
-  total: number;
+  itemsCount?: number;
+  items?: any[];
+  total?: number;
+  saleValue?: number;
   paymentMethod: string;
 };
 
@@ -49,7 +51,8 @@ export default function POSPage() {
           const res = await fetch(`/api/products?search=${encodeURIComponent(searchTerm)}`);
           if (res.ok) {
             const data = await res.json();
-            setSearchResults(data);
+            const list = Array.isArray(data) ? data : (data.products || []);
+            setSearchResults(list);
           }
         } catch (error) {
           console.error(error);
@@ -69,7 +72,8 @@ export default function POSPage() {
       const res = await fetch("/api/pos");
       if (res.ok) {
         const data = await res.json();
-        setTodaySales(data);
+        const list = Array.isArray(data) ? data : (data.sales || []);
+        setTodaySales(list);
       }
     } catch (error) {
       console.error(error);
@@ -154,7 +158,8 @@ export default function POSPage() {
     }
   };
 
-  const todaySalesTotal = todaySales.reduce((acc, sale) => acc + sale.total, 0);
+  const safeSales = Array.isArray(todaySales) ? todaySales : [];
+  const todaySalesTotal = safeSales.reduce((acc, sale) => acc + (sale.total || sale.saleValue || 0), 0);
 
   return (
     <div className="flex-1 space-y-4 p-4 md:p-8 pt-6">
@@ -321,23 +326,27 @@ export default function POSPage() {
             <CardContent>
               <div className="mb-4">
                 <p className="text-3xl font-bold">{formatCurrency(todaySalesTotal)}</p>
-                <p className="text-sm text-muted-foreground">{todaySales.length} venda(s) registrada(s)</p>
+                <p className="text-sm text-muted-foreground">{safeSales.length} venda(s) registrada(s)</p>
               </div>
 
               <div className="space-y-4 max-h-[500px] overflow-auto">
-                {todaySales.length === 0 ? (
+                {safeSales.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-4">Nenhuma venda hoje.</p>
                 ) : (
-                  todaySales.map((sale) => (
-                    <div key={sale.id} className="flex justify-between items-center border-b pb-2 last:border-0">
-                      <div>
-                        <p className="font-medium">{formatCurrency(sale.total)}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {new Date(sale.createdAt).toLocaleTimeString()} • {sale.itemsCount} item(s) • {sale.paymentMethod}
-                        </p>
+                  safeSales.map((sale) => {
+                    const saleVal = sale.total || sale.saleValue || 0;
+                    const itemsCount = sale.itemsCount ?? (sale.items?.length || 0);
+                    return (
+                      <div key={sale.id} className="flex justify-between items-center border-b pb-2 last:border-0">
+                        <div>
+                          <p className="font-medium">{formatCurrency(saleVal)}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(sale.createdAt).toLocaleTimeString()} • {itemsCount} item(s) • {sale.paymentMethod}
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             </CardContent>

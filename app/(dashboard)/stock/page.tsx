@@ -14,6 +14,7 @@ type StockProduct = {
   stockCode: string;
   name: string;
   stockQuantity: number;
+  minStockLevel?: number;
   minStock: number;
   unit: string;
 };
@@ -34,7 +35,12 @@ export default function StockPage() {
       const res = await fetch("/api/stock");
       if (res.ok) {
         const data = await res.json();
-        setProducts(data);
+        const rawList = Array.isArray(data) ? data : (data.products || []);
+        const normalized = rawList.map((p: any) => ({
+          ...p,
+          minStock: p.minStockLevel ?? p.minStock ?? 0,
+        }));
+        setProducts(normalized);
       }
     } catch (error) {
       console.error(error);
@@ -45,13 +51,15 @@ export default function StockPage() {
     loadStock();
   }, []);
 
-  const totalProducts = products.length;
-  const okStock = products.filter(p => p.stockQuantity > p.minStock).length;
-  const lowStock = products.filter(p => p.stockQuantity > 0 && p.stockQuantity <= p.minStock).length;
-  const outStock = products.filter(p => p.stockQuantity === 0).length;
+  const safeProducts = Array.isArray(products) ? products : [];
+  const totalProducts = safeProducts.length;
+  const okStock = safeProducts.filter(p => p.stockQuantity > (p.minStock ?? 0)).length;
+  const lowStock = safeProducts.filter(p => p.stockQuantity > 0 && p.stockQuantity <= (p.minStock ?? 0)).length;
+  const outStock = safeProducts.filter(p => p.stockQuantity === 0).length;
 
-  const filteredProducts = products.filter(p => {
-    if (filter === "LOW") return p.stockQuantity > 0 && p.stockQuantity <= p.minStock;
+  const filteredProducts = safeProducts.filter(p => {
+    const min = p.minStock ?? 0;
+    if (filter === "LOW") return p.stockQuantity > 0 && p.stockQuantity <= min;
     if (filter === "OUT") return p.stockQuantity === 0;
     return true;
   });
