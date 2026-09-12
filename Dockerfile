@@ -44,6 +44,7 @@ RUN adduser --system --uid 1001 nextjs
 # Install Prisma CLI for migrations and bcryptjs for seed
 RUN npm install -g prisma@6 tsx
 RUN npm install bcryptjs
+RUN chown -R nextjs:nodejs /usr/local/lib/node_modules /usr/local/bin 2>/dev/null || true
 
 COPY --from=builder /app/public ./public
 

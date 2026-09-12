@@ -24,13 +24,13 @@ echo "✅ Banco de dados conectado!"
 
 # Rodar migrations e sincronizar schema
 echo "📦 Aplicando schema no banco de dados..."
-npx prisma db push --schema=./prisma/schema.prisma --accept-data-loss
+npx prisma db push --schema=./prisma/schema.prisma --accept-data-loss --skip-generate
 echo "✅ Schema aplicado com sucesso!"
 
 # Seed opcional (apenas na primeira execução)
 if [ "$RUN_SEED" = "true" ]; then
     echo "🌱 Rodando seed do banco..."
-    npx prisma db seed --schema=./prisma/schema.prisma
+    npx tsx prisma/seed.ts
     echo "✅ Seed concluído!"
 fi
 
