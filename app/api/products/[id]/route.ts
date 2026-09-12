@@ -9,6 +9,9 @@ const productSchema = z.object({
     name: z.string().min(3, "Nome deve ter pelo menos 3 caracteres"),
     stockCode: z.string().min(1, "Código do estoque é obrigatório"),
     costPrice: z.number().optional().nullable(),
+    stockQuantity: z.number().optional().nullable(),
+    minStockLevel: z.number().optional().nullable(),
+    unit: z.string().optional().nullable(),
     customFields: z.record(z.string()).optional(),
 });
 

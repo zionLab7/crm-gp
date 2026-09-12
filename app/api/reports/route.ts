@@ -59,7 +59,7 @@ export async function GET(request: Request) {
         });
 
         // ✅ Fetch client and user names for scheduled sale interactions
-        const schedClientIds = [...new Set(scheduledSaleInteractions.map(i => i.clientId))];
+        const schedClientIds = [...new Set(scheduledSaleInteractions.map(i => i.clientId).filter((id): id is string => id !== null))];
         const schedUserIds = [...new Set(scheduledSaleInteractions.map(i => i.userId))];
         const schedClients = schedClientIds.length > 0
             ? await prisma.client.findMany({ where: { id: { in: schedClientIds } }, select: { id: true, name: true } })
@@ -94,7 +94,7 @@ export async function GET(request: Request) {
                 const meta = JSON.parse(interaction.metadata);
                 if (meta.saleType === "SCHEDULED") continue;
                 const val = parseFloat(String(meta.saleValue || 0));
-                if (val > 0) {
+                if (val > 0 && interaction.clientId) {
                     addSaleValue(interaction.clientId, interaction.userId, val);
                 }
             } catch { /* ignore */ }
@@ -111,7 +111,7 @@ export async function GET(request: Request) {
                     const dueDate = new Date(delivery.dueDate + "T00:00:00");
                     if (dueDate >= startDate && dueDate <= now) {
                         const val = parseFloat(String(delivery.value || 0));
-                        if (val > 0) {
+                        if (val > 0 && interaction.clientId) {
                             addSaleValue(interaction.clientId, interaction.userId, val);
                         }
                     }
@@ -132,7 +132,7 @@ export async function GET(request: Request) {
                     if (filteredDeliveries.length === 0) return null;
                     return {
                         id: interaction.id,
-                        clientName: schedClientNameMap.get(interaction.clientId) || "Desconhecido",
+                        clientName: (interaction.clientId && schedClientNameMap.get(interaction.clientId)) || "Balcão",
                         vendedorName: schedUserNameMap.get(interaction.userId) || "Desconhecido",
                         createdAt: interaction.createdAt.toISOString(),
                         totalValue: parseFloat(String(meta.saleValue || 0)),
@@ -159,9 +159,9 @@ export async function GET(request: Request) {
             const totalVendas = userSaleMap.get(vendedor.id) || 0;
             // Count unique clients sold to by this vendedor
             const clientesVendidos = allSaleInteractions.filter(
-                i => i.userId === vendedor.id && (clientSaleMap.get(i.clientId) || 0) > 0
+                i => i.userId === vendedor.id && i.clientId && (clientSaleMap.get(i.clientId) || 0) > 0
             );
-            const uniqueClientesVendidos = new Set(clientesVendidos.map(i => i.clientId)).size;
+            const uniqueClientesVendidos = new Set(clientesVendidos.map(i => i.clientId).filter(Boolean)).size;
             const conversao = totalClientes > 0 ? (uniqueClientesVendidos / totalClientes) * 100 : 0;
 
             return {

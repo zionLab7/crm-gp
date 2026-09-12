@@ -125,8 +125,8 @@ async function getBusinessContext() {
                 const meta = JSON.parse(i.metadata || "{}");
                 if (meta.saleType !== "SCHEDULED" || !meta.deliveries) return null;
                 return {
-                    cliente: i.client.name,
-                    vendedor: i.user.name,
+                    cliente: i.client?.name || "Balcão",
+                    vendedor: i.user?.name || "—",
                     dataRegistro: i.createdAt.toISOString().split("T")[0],
                     valorTotal: meta.saleValue,
                     itens: (meta.items || []).map((it: any) => `${it.productName} (x${it.quantity})`).join(", ") || "—",
