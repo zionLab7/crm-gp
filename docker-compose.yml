@@ -12,10 +12,10 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=traefik"
-      - "traefik.http.routers.gp-crm.rule=Host(`app.crmgp.cloud`)"
+      - "traefik.http.routers.gp-crm.rule=Host(`app.distribuidoragpbrasil.com.br`)"
       - "traefik.http.routers.gp-crm.entrypoints=websecure"
       - "traefik.http.routers.gp-crm.tls.certresolver=leresolver"
-      - "traefik.http.routers.gp-crm-http.rule=Host(`app.crmgp.cloud`)"
+      - "traefik.http.routers.gp-crm-http.rule=Host(`app.distribuidoragpbrasil.com.br`)"
       - "traefik.http.routers.gp-crm-http.entrypoints=web"
       - "traefik.http.routers.gp-crm-http.middlewares=gp-redirect"
       - "traefik.http.middlewares.gp-redirect.redirectscheme.scheme=https"
