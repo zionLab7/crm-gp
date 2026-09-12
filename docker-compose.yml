@@ -1,8 +1,11 @@
 services:
   app:
+    image: gp-crm:v1.0.1
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        CACHE_BUST: "20260912-1"
     restart: always
     environment:
       - DATABASE_URL=postgresql://gp_user:GPCRM2026Prod@db:5432/gp_db?schema=public
