@@ -22,10 +22,10 @@ until node -e "
 done
 echo "✅ Banco de dados conectado!"
 
-# Rodar migrations
-echo "📦 Aplicando migrations..."
-npx prisma migrate deploy --schema=./prisma/schema.prisma
-echo "✅ Migrations aplicadas!"
+# Rodar migrations e sincronizar schema
+echo "📦 Aplicando schema no banco de dados..."
+npx prisma db push --schema=./prisma/schema.prisma --accept-data-loss
+echo "✅ Schema aplicado com sucesso!"
 
 # Seed opcional (apenas na primeira execução)
 if [ "$RUN_SEED" = "true" ]; then
